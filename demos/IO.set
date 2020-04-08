@@ -1,0 +1,2 @@
+name := enquire('What is your name? ')
+put('Hello ' + name)

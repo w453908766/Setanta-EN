@@ -1,0 +1,123 @@
+---
+import { Environment } from "./env";
+import { callFunc, idxList, Value } from "./values";
+import { unescapeChars } from "./letters";
+import * as Asserts from "./asserts";
+import * as Checks from "./checks";
+import { orBinOp, orQuickBinOp, andBinOp, andQuickBinOp,
+    binOpEvalFn, binOpQuickEvalFn } from "./binops";
+import { objLookupsEval, postfixArgsEval, csArgsEval, prefEval, EvalFn } from "./evals";
+import { qEvalToEval } from "./evals";
+import * as Quick from "./quickevals";
+---
+Program     := stmts=AsgnStmt* _
+AsgnStmt    := IfStmt
+             | BlockStmt
+             | WhenStmt
+             | ForStmt
+             | ContinueStmt
+             | BreakStmt
+             | CtlchStmt
+             | FunctionStmt
+             | ReturnStmt
+             | AssignStmt
+             | DefnStmt
+             | Expr
+NonAsgnStmt := IfStmt
+             | WhenStmt
+             | ForStmt
+             | ContinueStmt
+             | BreakStmt
+             | ReturnStmt
+             | BlockStmt
+             | AssignStmt
+             | Expr
+IfStmt      := _ 'if' &gap expr=Expr &gap stmt=NonAsgnStmt elsebranch={_ 'or' &gap stmt=NonAsgnStmt}?
+BlockStmt   := _ '{' blk=AsgnStmt* _ '}'
+WhenStmt   := _ 'when' expr=Expr &gap stmt=NonAsgnStmt
+ForStmt      := _ 'for' &gap id=ID _ 'in' _ '\('strt=Expr _ ',' end=Expr step={_ ',' step=Expr}? _ '\)' stmt=NonAsgnStmt
+DefnStmt    := _ idstart=@ id=ID idend=@ _ ':=' _ expr=Expr
+AssignStmt   := _ lhs=Postfix _ op=AsgnOp _ expr=Expr
+FunctionStmt  := _ 'function' &gap id=ID _ '\(' args=CSIDs? _ '\)' _ '{'
+    stmts=AsgnStmt*
+_ '}'
+CtlchStmt   := _ 'object' &gap id=ID tuis={_ 'ó' &gap parentstart=@ id=ID parentend=@}? _ '{'
+    functions=FunctionStmt*
+_ '}'
+BreakStmt    := _ 'break'
+ContinueStmt      := _ 'continue'
+ReturnStmt  := _ 'return' &gap exp=Expr?
+Expr        := And
+And         := start=@ head=Or tail={_ '\&' trm=Or}* end=@
+               .evalfn = EvalFn { return andBinOp(this); }
+               .qeval = Quick.MaybeEv { return andQuickBinOp(this); }
+Or          := start=@ head=Eq tail={_ '\|' trm=Eq}* end=@
+               .evalfn = EvalFn { return orBinOp(this) }
+               .qeval = Quick.MaybeEv { return orQuickBinOp(this); }
+Eq          := start=@ head=Comp tail={_ op='[!=]=' trm=Comp}* end=@
+               .evalfn = EvalFn { return binOpEvalFn(this) }
+               .qeval = Quick.MaybeEv { return binOpQuickEvalFn(this); }
+Comp        := start=@ head=Sum tail={_ op=Compare trm=Sum}* end=@
+               .evalfn = EvalFn { return binOpEvalFn(this) }
+               .qeval = Quick.MaybeEv { return binOpQuickEvalFn(this); }
+Sum         := start=@ head=Product tail={_ op=PlusMinus trm=Product}* end=@
+               .evalfn = EvalFn { return binOpEvalFn(this) }
+               .qeval = Quick.MaybeEv { return binOpQuickEvalFn(this); }
+Product     := start=@ head=Prefix tail={_ op=MulDiv trm=Prefix}* end=@
+               .evalfn = EvalFn { return binOpEvalFn(this); }
+               .qeval = Quick.MaybeEv { return binOpQuickEvalFn(this); }
+Prefix      := _ start=@ op='-|!'? pf=Postfix end=@
+               .evalfn = EvalFn { return prefEval(this); }
+               .qeval = Quick.MaybeEv { return Quick.qPrefEval(this); }
+Postfix     := start=@ at=ObjLookups ops=PostOp* end=@
+               .evalfn = EvalFn { return postfixArgsEval(this); }
+               .qeval = Quick.MaybeEv { return Quick.qPostfixArgsEval(this); }
+ObjLookups  := start=@ attrs={id=ID '@' !wspace}* root=Atom end=@
+               .evalfn = EvalFn { return objLookupsEval(this); }
+               .qeval = Quick.MaybeEv { return Quick.qObjLookupsEval(this); }
+PostOp      := '\(' args=CSArgs? _ '\)' | '\[' expr=Expr _ '\]'
+Atom        :=  _ '\(' trm=Expr '\)'
+               .evalfn = EvalFn { return (env: Environment) => this.trm.evalfn(env); }
+               .qeval = Quick.MaybeEv {
+                    const childF = this.trm.qeval;
+                    return childF === null ? null : childF.bind(this.trm);
+               }
+             | ID
+             | Letters
+             | Int
+             | Bool
+             | Void
+             | ListLit
+ListLit     := _ '\[' els=CSArgs? _ '\]'
+               .evalfn = EvalFn {
+                   return (env: Environment) => this.els ? this.els.evalfn(env) : Promise.resolve([]);
+               }
+               .qeval = Quick.MaybeEv { return Quick.qListLitEval(this); }
+CSArgs      := start=@ head=Expr tail={_ ',' exp=Expr}* end=@
+               .evalfn = (env:Environment)=>Promise<Value[]> { return csArgsEval(this); }
+               .qeval = ((env:Environment)=>Value[])|null { return Quick.qCSArgsEval(this); }
+CSIDs       := head=ID tail={_ ',' id=ID}*
+ID          := _ !{Keyword gap} start=@ id='[a-zA-Z_]+' end=@
+               .evalfn = EvalFn { return qEvalToEval(Quick.qIdEval(this.id, this.start, this.end)); }
+               .qeval = Quick.EvalFn { return Quick.qIdEval(this.id, this.start, this.end); }
+Bool        := _ bool='true|false'
+               .evalfn = EvalFn { return qEvalToEval(Quick.qBoolEval(this.bool)); }
+               .qeval = Quick.EvalFn { return Quick.qBoolEval(this.bool); }
+Void     := _ 'void'
+               .evalfn = EvalFn { return () => Promise.resolve(null); }
+               .qeval = Quick.EvalFn { return () => null; }
+Int         := _ int='-?[0-9]+(?:\.[0-9]+)?'
+               .evalfn = EvalFn { return qEvalToEval(Quick.qIntEval(this.int)); }
+               .qeval = Quick.EvalFn { return Quick.qIntEval(this.int); }
+Letters   := _ '\'' val='([^\'\\]|\\.)*' '\''
+               .evalfn = EvalFn { return qEvalToEval(Quick.qLettersEval(this.val)); }
+               .qeval = Quick.EvalFn { return Quick.qLettersEval(this.val); }
+_           := wspace*
+wspace      := '(?:\s|>--(?:(?!--<).)*(--<|\n|$))'
+gap         := { wspace | '[^a-zA-Z0-9]' }+ | '$'
+PlusMinus   := '\+|-'
+AsgnOp      := '=|\+=|\*=|-=|%=|\/='
+MulDiv      := '\*|\/\/|%|\/'
+Compare     := '<=|>=|<|>'
+Keyword     := 'if' | 'or' | 'when' | 'true' |'false'
+    | 'function' | 'continue' | 'void' | 'return' | 'object'

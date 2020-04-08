@@ -1,0 +1,22 @@
+s := 'test'
+
+function copy(arr) {
+    nua := [true]*length(arr)
+    for i in (0, length(arr))
+        nua[i] = arr[i]
+    return nua
+}
+
+function gen(ind, used, st) {
+    if ind == length(s)
+        put(st)
+    for i in (0, length(s)) {
+        if used[i]
+            continue
+        nused := copy(used)
+        nused[i] = true
+        gen(ind + 1, nused, st + s[i])
+    }
+}
+
+gen(0, [false]*length(s), '')

@@ -1,0 +1,19 @@
+function prime(x) {
+    if x <= 2
+        return x == 2
+    for i in (2, x) {
+        put i
+        if i*i > x
+            break
+        if x % i == 0
+            return false
+    }
+    return true
+}
+
+
+for i in (2,100) {
+  if prime(i)
+    put(i)
+}
+
